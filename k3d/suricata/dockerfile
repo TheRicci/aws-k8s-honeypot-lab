@@ -1,0 +1,13 @@
+FROM debian:bookworm‑slim
+
+# make sure sbin dirs are on PATH
+ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH}"
+
+RUN apt‑get update \
+ && apt‑get install ‑y suricata iproute2 net‑tools \
+ && rm ‑rf /var/lib/apt/lists/*
+
+USER suricata
+
+ENTRYPOINT ["suricata"]
+CMD ["--af‑packet=eth0","--runmode=autofp","-c","/etc/suricata/suricata.yaml","-l","/var/log/suricata"]

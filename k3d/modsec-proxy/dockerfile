@@ -1,0 +1,52 @@
+FROM debian:bookworm-slim
+
+# Refresh certificates and keyrings first
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    gnupg \
+    dirmngr \
+    debian-archive-keyring \
+ && rm -rf /var/lib/apt/lists/*
+
+# Switch repo definitions to HTTPS
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+ && sed -i 's|http://security.debian.org|https://security.debian.org|g' /etc/apt/sources.list.d/debian.sources
+
+# 1) Install nginx, ModSecurity, jq, tools
+RUN apt-get update && apt-get install -y \
+    nginx \
+    libmodsecurity3 \
+    libnginx-mod-http-modsecurity \
+    libnginx-mod-stream \
+    jq \
+    net-tools \
+    iproute2 \
+  && rm -rf /var/lib/apt/lists/*
+
+# 2) Enable the ModSecurity & Stream modules
+RUN printf "\
+load_module modules/ngx_http_modsecurity_module.so;\n\
+load_module modules/ngx_stream_module.so;\n\
+" > /etc/nginx/modules-enabled/50-extra-modules.conf
+
+# 3) Copy in our converter scripts
+COPY modsec-json-to-apache.sh /usr/local/bin/modsec-json-to-apache.sh
+COPY modsec-jsonl.sh          /usr/local/bin/modsec-jsonl.sh
+RUN chmod +x /usr/local/bin/modsec-json-to-apache.sh \
+         /usr/local/bin/modsec-jsonl.sh
+
+# 4) Create & chown the output files
+RUN touch /var/log/nginx/modsec_error.json \
+         /var/log/nginx/modsec_audit.jsonl && \
+    chown www-data:www-data /var/log/nginx/modsec_error.json \
+                            /var/log/nginx/modsec_audit.jsonl
+
+# 5) Expose HTTP/S
+EXPOSE 80 443
+
+# 6) On start: launch both converters, then nginx
+CMD ["sh", "-c", "\
+    /usr/local/bin/modsec-jsonl.sh & \
+    /usr/local/bin/modsec-json-to-apache.sh & \
+    nginx -g 'daemon off;'\
+"]

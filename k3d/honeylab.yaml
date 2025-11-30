@@ -1,0 +1,546 @@
+# k8s/honeylab.yaml
+# ===========================================================
+# Namespaces
+# ===========================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: honeynet
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: siem
+---
+# ===========================================================
+# 1) Proxy (nginx + ModSecurity) - pinned to role=proxy
+# ===========================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: modsec-proxy
+  namespace: honeynet
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: modsec-proxy
+  template:
+    metadata:
+      labels:
+        app: modsec-proxy
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: role
+                    operator: In
+                    values:
+                      - proxy
+      containers:
+      - name: nginx-modsec
+        # << REPLACE with your nginx+modsecurity image if available >>
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+        - containerPort: 443
+        volumeMounts:
+        - name: nginx-conf
+          mountPath: /etc/nginx
+      volumes:
+      - name: nginx-conf
+        configMap:
+          name: nginx-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: modsec-proxy
+  namespace: honeynet
+spec:
+  selector:
+    app: modsec-proxy
+  ports:
+  - port: 80
+    targetPort: 80
+  - port: 443
+    targetPort: 443
+  type: ClusterIP
+---
+# ===========================================================
+# 2) Honeypot - pinned to role=honeypot
+# ===========================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: honeypot
+  namespace: honeynet
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: honeypot
+  template:
+    metadata:
+      labels:
+        app: honeypot
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: role
+                    operator: In
+                    values:
+                      - honeypot
+      containers:
+      - name: honeypot
+        # << REPLACE with your honeypot image >>
+        image: kennethreitz/httpbin:latest
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: honeypot
+  namespace: honeynet
+spec:
+  selector:
+    app: honeypot
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+---
+# ===========================================================
+# 3) Suricata DaemonSet - hostNetwork, affinity to proxy+honeypot
+# ===========================================================
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: suricata
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: suricata
+  template:
+    metadata:
+      labels:
+        app: suricata
+    spec:
+      hostNetwork: true
+      hostPID: true
+      tolerations:
+      - operator: "Exists"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: role
+                    operator: In
+                    values:
+                      - proxy
+                      - honeypot
+      containers:
+      - name: suricata
+        image: oisf/suricata:7.0.3
+        securityContext:
+          privileged: true
+        args: ["-i", "eth0", "-c", "/etc/suricata/suricata.yaml"]
+        volumeMounts:
+        - name: suricata-logs
+          mountPath: /var/log/suricata
+      volumes:
+      - name: suricata-logs
+        hostPath:
+          path: /var/log/suricata
+---
+# ===========================================================
+# 4) Fluent Bit (DaemonSet) - collect logs from all nodes
+# ===========================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: monitoring
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush        1
+        Log_Level    info
+        Parsers_File parsers.conf
+    @INCLUDE input-tail.conf
+    @INCLUDE filter-kubernetes.conf
+    @INCLUDE output-opensearch.conf
+  input-tail.conf: |
+    [INPUT]
+        Name        tail
+        Path        /var/log/containers/*.log,/var/log/nginx/*.log,/var/log/suricata/*.log
+        Tag         kube.*
+        Parser      docker
+        DB          /var/log/flb_kube.db
+        Mem_Buf_Limit 5MB
+  filter-kubernetes.conf: |
+    [FILTER]
+        Name        kubernetes
+        Match       kube.*
+        Kube_URL    https://kubernetes.default.svc:443
+  output-opensearch.conf: |
+    [OUTPUT]
+        Name            opensearch
+        Match           *
+        Host            wazuh-indexer.siem.svc.cluster.local
+        Port            9200
+        Index           fluent-bit
+        Type            _doc
+        Logstash_Format On
+        HTTP_User       admin
+        HTTP_Passwd     admin
+  parsers.conf: |
+    [PARSER]
+        Name        docker
+        Format      json
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+    spec:
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit:1.9
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: config
+          mountPath: /fluent-bit/etc/
+          readOnly: true
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: config
+        configMap:
+          name: fluent-bit-config
+---
+# ===========================================================
+# 5) Wazuh indexer (OpenSearch) - pinned to role=siem (StatefulSet)
+# ===========================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: wazuh-indexer
+  namespace: siem
+spec:
+  selector:
+    app: wazuh-indexer
+  ports:
+  - name: http
+    port: 9200
+    targetPort: 9200
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: wazuh-indexer
+  namespace: siem
+spec:
+  serviceName: "wazuh-indexer"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wazuh-indexer
+  template:
+    metadata:
+      labels:
+        app: wazuh-indexer
+    spec:
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "siem"
+        effect: "NoSchedule"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: role
+                    operator: In
+                    values:
+                      - siem
+      containers:
+      - name: opensearch
+        image: opensearchproject/opensearch:2.10.2
+        env:
+        - name: cluster.name
+          value: "wazuh-cluster"
+        - name: discovery.type
+          value: "single-node"
+        ports:
+        - containerPort: 9200
+        volumeMounts:
+        - name: data
+          mountPath: /usr/share/opensearch/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      storageClassName: local-path
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+---
+# ===========================================================
+# 6) Wazuh manager - pinned to role=siem
+# ===========================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: wazuh-manager
+  namespace: siem
+spec:
+  selector:
+    app: wazuh-manager
+  ports:
+  - name: agent
+    port: 1515
+    targetPort: 1515
+  - name: api
+    port: 55000
+    targetPort: 55000
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wazuh-manager
+  namespace: siem
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wazuh-manager
+  template:
+    metadata:
+      labels:
+        app: wazuh-manager
+    spec:
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "siem"
+        effect: "NoSchedule"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+                - key: role
+                  operator: In
+                  values:
+                    - siem
+      containers:
+      - name: wazuh-manager
+        image: wazuh/wazuh:4.4.0
+        ports:
+        - containerPort: 1515
+        - containerPort: 55000
+        volumeMounts:
+        - name: wazuh-data
+          mountPath: /var/ossec/data
+      volumes:
+      - name: wazuh-data
+        emptyDir: {}
+---
+# ===========================================================
+# 7) Wazuh Dashboard - pinned to role=siem
+# ===========================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: wazuh-dashboard
+  namespace: siem
+spec:
+  selector:
+    app: wazuh-dashboard
+  ports:
+  - name: ui
+    port: 5601
+    targetPort: 5601
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wazuh-dashboard
+  namespace: siem
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wazuh-dashboard
+  template:
+    metadata:
+      labels:
+        app: wazuh-dashboard
+    spec:
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "siem"
+        effect: "NoSchedule"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+                - key: role
+                  operator: In
+                  values:
+                    - siem
+      containers:
+      - name: wazuh-dashboard
+        image: wazuh/wazuh-dashboard:4.4.0
+        ports:
+        - containerPort: 5601
+---
+# ===========================================================
+# 8) Wazuh Agent DaemonSet (runs on all nodes, tolerates siem taint)
+# ===========================================================
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: wazuh-agent
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: wazuh-agent
+  template:
+    metadata:
+      labels:
+        app: wazuh-agent
+    spec:
+      hostPID: true
+      tolerations:
+      - key: "dedicated"
+        operator: "Equal"
+        value: "siem"
+        effect: "NoSchedule"
+      containers:
+      - name: wazuh-agent
+        image: wazuh/wazuh-agent:4.4.0
+        env:
+        - name: WAZUH_MANAGER
+          value: "wazuh-manager.siem.svc.cluster.local"
+        - name: WAZUH_MANAGER_PORT
+          value: "1515"
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: var-run
+          mountPath: /var/run
+        - name: ossec-etc
+          mountPath: /var/ossec/etc
+      volumes:
+      - name: var-run
+        hostPath:
+          path: /var/run
+      - name: ossec-etc
+        hostPath:
+          path: /var/ossec/etc
+---
+# ===========================================================
+# 9) NetworkPolicies
+# ===========================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-egress-to-siem
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: siem
+    ports:
+    - protocol: TCP
+      port: 9200
+    - protocol: TCP
+      port: 1515
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: honeynet-default-deny
+  namespace: honeynet
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress: []
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-modsec
+  namespace: honeynet
+spec:
+  podSelector:
+    matchLabels:
+      app: modsec-proxy
+  policyTypes:
+  - Ingress
+  ingress:
+  - {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: proxy-to-honeypot
+  namespace: honeynet
+spec:
+  podSelector:
+    matchLabels:
+      app: honeypot
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: modsec-proxy
+    ports:
+    - protocol: TCP
+      port: 8080

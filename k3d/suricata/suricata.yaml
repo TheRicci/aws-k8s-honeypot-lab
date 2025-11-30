@@ -1,0 +1,85 @@
+%YAML 1.1
+---
+# paths
+default-rule-path: /etc/suricata/rules
+rule-files:
+  - botcc.portgrouped.rules
+  - botcc.rules
+  - ciarmy.rules
+  - compromised.rules
+  - drop.rules
+  - dshield.rules
+  - emerging-activex.rules
+  - emerging-adware_pup.rules
+  - emerging-attack_response.rules
+  - emerging-chat.rules
+  - emerging-coinminer.rules
+  - emerging-current_events.rules
+  - emerging-deleted.rules
+  - emerging-dns.rules
+  - emerging-dos.rules
+  - emerging-exploit.rules
+  - emerging-exploit_kit.rules
+  - emerging-ftp.rules
+  - emerging-games.rules
+  - emerging-hunting.rules
+  - emerging-icmp.rules
+  - emerging-icmp_info.rules
+  - emerging-imap.rules
+  - emerging-inappropriate.rules
+  - emerging-info.rules
+  - emerging-ja3.rules
+  - emerging-malware.rules
+  - emerging-misc.rules
+  - emerging-mobile_malware.rules
+  - emerging-netbios.rules
+  - emerging-p2p.rules
+  - emerging-phishing.rules
+  - emerging-policy.rules
+  - emerging-pop3.rules
+  - emerging-retired.rules
+  - emerging-rpc.rules
+  - emerging-scada.rules
+  - emerging-scan.rules
+  - emerging-shellcode.rules
+  - emerging-smtp.rules
+  - emerging-snmp.rules
+  - emerging-sql.rules
+  - emerging-telnet.rules
+  - emerging-tftp.rules
+  - emerging-user_agents.rules
+  - emerging-voip.rules
+  - emerging-web_client.rules
+  - emerging-web_server.rules
+  - emerging-web_specific_apps.rules
+  - emerging-worm.rules
+  - threatview_CS_c2.rules
+
+
+# logs
+outputs:
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve.json
+      types:
+        - alert
+      xff:
+        enabled: yes
+        mode: overwrite
+        deployment: reverse
+
+# af-packet
+af-packet:
+  - interface: eth0
+    threads: auto
+    cluster-id: 99
+    cluster-type: cluster_flow
+    defrag: yes
+    bypass: yes
+
+vars:
+  address-groups:
+    HOME_NET: "any"
+    EXTERNAL_NET: "any"
+    HTTP_SERVERS: "any"
