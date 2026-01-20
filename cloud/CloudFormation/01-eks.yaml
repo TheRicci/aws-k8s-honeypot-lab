@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Honeylab EKS Cluster
+
+Resources:
+  EKSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: honeylab
+      Version: "1.27"
+      RoleArn:
+        Fn::GetAtt:
+          - EKSRole
+          - Arn
+      ResourcesVpcConfig:
+        SubnetIds:
+          - Fn::ImportValue: PrivateSubnet

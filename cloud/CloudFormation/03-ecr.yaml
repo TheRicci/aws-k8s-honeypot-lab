@@ -1,0 +1,80 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Honeylab ECR repositories
+
+Resources:
+  HoneypotRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: honeylab/honeypot
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      Tags:
+        - Key: project
+          Value: honeylab
+
+  ModsecProxyRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: honeylab/modsec-proxy
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      Tags:
+        - Key: project
+          Value: honeylab
+
+  SuricataRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: honeylab/suricata
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      Tags:
+        - Key: project
+          Value: honeylab
+
+  FluentBitRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: honeylab/fluent-bit
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      Tags:
+        - Key: project
+          Value: honeylab
+
+  WazuhRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: honeylab/wazuh
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      Tags:
+        - Key: project
+          Value: honeylab
+
+Outputs:
+  HoneypotRepoUri:
+    Value:
+      Fn::GetAtt:
+        - HoneypotRepository
+        - RepositoryUri
+    Export:
+      Name: HoneylabHoneypotRepo
+
+  ModsecRepoUri:
+    Value:
+      Fn::GetAtt:
+        - ModsecProxyRepository
+        - RepositoryUri
+    Export:
+      Name: HoneylabModsecRepo

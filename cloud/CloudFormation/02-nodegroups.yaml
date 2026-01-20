@@ -1,0 +1,31 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Honeylab Node Groups
+
+Resources:
+  NodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+
+  ProxyNodes:
+    Type: AWS::EKS::Nodegroup
+    Properties:
+      ClusterName: honeylab
+      NodegroupName: proxy
+      NodeRole:
+        Fn::GetAtt:
+          - NodeRole
+          - Arn
+      InstanceTypes: [t3.medium]
+      ScalingConfig:
+        DesiredSize: 1
+      Labels:
+        role: proxy
