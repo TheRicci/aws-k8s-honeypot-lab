@@ -77,6 +77,12 @@ logs/
 # Node labeling scripts (not needed - handled by CloudFormation/Terraform)
 cloud/k8s/node-labels/
 cloud/k8s/setup-node-labels.sh
+
+# Redundant config folders (actual configs are in configs/ as ConfigMaps)
+#cloud/k8s/proxy/config/
+#cloud/k8s/honeypot/config/
+
+# Documentation files
 DONT-README.md
 docker-compose-base.yml
 ARCHITECTURE-VISUAL.md
