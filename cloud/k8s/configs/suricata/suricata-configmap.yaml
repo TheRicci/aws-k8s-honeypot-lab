@@ -1,0 +1,198 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: suricata-config
+  namespace: honeynet
+data:
+  suricata.yaml: |
+    # Suricata configuration for honeypot monitoring
+    # Generated for Kubernetes honeynet environment
+
+    %YAML 1.1
+    ---
+
+    # Runmode the engine should use
+    runmode: autofp
+
+    # Logging configuration
+    logging:
+      default-log-level: info
+      default-output-filter:
+      outputs:
+      - console:
+          enabled: no
+      - file:
+          enabled: yes
+          filename: /var/log/suricata/suricata.log
+          level: info
+      - syslog:
+          enabled: no
+          facility: local5
+          format: "[%i] <%d> -- "
+
+    # Global stats configuration
+    stats:
+      enabled: yes
+      interval: 8
+
+    # Configure the type of alert (and other) logging
+    outputs:
+    - eve-log:
+        enabled: yes
+        filetype: regular
+        filename: /var/log/suricata/eve.json
+        types:
+        - alert:
+            payload: yes
+            payload-buffer-size: 4kb
+            payload-printable: yes
+            packet: yes
+            http: yes
+            tls: yes
+            ssh: yes
+            smtp: yes
+            dnp3: yes
+            tagged-packets: yes
+        - http:
+            extended: yes
+        - dns:
+            version: 2
+        - tls:
+            extended: yes
+        - files:
+            force-magic: no
+        - smtp:
+            extended: yes
+        - dnp3
+        - ftp
+        - rdp
+        - ssh
+        - stats:
+            totals: yes
+            threads: no
+        - drop:
+            alerts: yes
+            flows: start
+        - netflow
+
+    # AF-PACKET configuration for interface monitoring
+    af-packet:
+    - interface: eth0
+      cluster-id: 99
+      cluster-type: cluster_flow
+      defrag: yes
+
+    # Default rule path
+    default-rule-path: /etc/suricata/rules
+
+    # Rule files to load
+    rule-files:
+     - local.rules
+
+    # Classification configuration
+    classification-file: /etc/suricata/classification.config
+    reference-config-file: /etc/suricata/reference.config
+
+    # Thresholding configuration
+    threshold-file: /etc/suricata/threshold.config
+
+    # Host specific policies
+    host-os-policy:
+      windows: [0.0.0.0/0]
+      bsd: []
+      bsd-right: []
+      old-linux: []
+      linux: [10.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12]
+      old-solaris: []
+      solaris: [0.0.0.0/0]
+      hpux10: []
+      hpux11: []
+      irix: []
+      macos: []
+      vista: []
+      windows2k3: []
+
+    # Engine settings
+    engine:
+      analysis-engine: on
+
+    # Pattern matcher settings
+    pattern-matcher:
+      - mpm-algo: ac
+        hash-size: 2048
+        bloom-size: 65536
+
+    # Detection settings
+    detection:
+      prefilt:
+        - threshold: 1000
+          v3: 1000
+
+    # Flow settings
+    flow:
+      memcap: 128mb
+      hash-size: 65536
+      prealloc: 10000
+      emergency-recovery: 30
+
+    # Stream settings
+    stream:
+      memcap: 64mb
+      checksum-validation: yes
+      inline: auto
+      reassembly:
+        memcap: 256mb
+        depth: 1mb
+        toserver-chunk-size: 2560
+        toclient-chunk-size: 2560
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: suricata-rules
+  namespace: honeynet
+data:
+  local.rules: |
+    # Custom Suricata rules for honeypot monitoring
+
+    # SSH brute force detection
+    alert tcp any any -> any 22 (msg:"SSH brute force attempt"; flow:to_server,established; content:"SSH-"; depth:4; threshold:type threshold, track by_src, count 5, seconds 60; sid:1000001; rev:1;)
+
+    # FTP anonymous login attempts
+    alert tcp any any -> any 21 (msg:"FTP anonymous login attempt"; flow:to_server,established; content:"USER anonymous"; nocase; sid:1000002; rev:1;)
+
+    # Web shell detection
+    alert tcp any any -> any $HTTP_PORTS (msg:"Potential web shell access"; flow:to_server,established; content:"/shell.php"; http_uri; sid:1000003; rev:1;)
+
+    # Suspicious HTTP methods
+    alert tcp any any -> any $HTTP_PORTS (msg:"Suspicious HTTP method"; flow:to_server,established; content:"CONNECT "; depth:8; sid:1000004; rev:1;)
+    alert tcp any any -> any $HTTP_PORTS (msg:"Suspicious HTTP method"; flow:to_server,established; content:"TRACE "; depth:6; sid:1000005; rev:1;)
+
+    # SQL injection patterns
+    alert tcp any any -> any $HTTP_PORTS (msg:"SQL injection attempt - union select"; flow:to_server,established; content:"union select"; nocase; http_uri; sid:1000006; rev:1;)
+    alert tcp any any -> any $HTTP_PORTS (msg:"SQL injection attempt - 1=1"; flow:to_server,established; content:"1=1"; http_uri; sid:1000007; rev:1;)
+
+    # XSS attempts
+    alert tcp any any -> any $HTTP_PORTS (msg:"XSS attempt - script tag"; flow:to_server,established; content:"<script>"; nocase; http_uri; sid:1000008; rev:1;)
+    alert tcp any any -> any $HTTP_PORTS (msg:"XSS attempt - javascript:"; flow:to_server,established; content:"javascript:"; nocase; http_uri; sid:1000009; rev:1;)
+
+    # Directory traversal
+    alert tcp any any -> any $HTTP_PORTS (msg:"Directory traversal - dot dot slash"; flow:to_server,established; content:"../"; http_uri; sid:1000010; rev:1;)
+    alert tcp any any -> any $HTTP_PORTS (msg:"Directory traversal - encoded"; flow:to_server,established; content:"%2e%2e%2f"; http_uri; sid:1000011; rev:1;)
+
+    # Command injection patterns
+    alert tcp any any -> any $HTTP_PORTS (msg:"Command injection - pipe"; flow:to_server,established; content:"|"; http_uri; sid:1000012; rev:1;)
+    alert tcp any any -> any $HTTP_PORTS (msg:"Command injection - semicolon"; flow:to_server,established; content:";"; http_uri; sid:1000013; rev:1;)
+
+    # Malware download attempts
+    alert tcp any any -> any $HTTP_PORTS (msg:"Suspicious download - exe"; flow:to_server,established; content:".exe"; http_uri; sid:1000014; rev:1;)
+    alert tcp any any -> any $HTTP_PORTS (msg:"Suspicious download - bat"; flow:to_server,established; content:".bat"; http_uri; sid:1000015; rev:1;)
+
+    # Honeypot-specific alerts
+    alert tcp any any -> any 22 (msg:"SSH connection to honeypot"; flow:to_server,established; sid:1000016; rev:1;)
+    alert tcp any any -> any 80 (msg:"HTTP connection to honeypot"; flow:to_server,established; sid:1000017; rev:1;)
+    alert tcp any any -> any 443 (msg:"HTTPS connection to honeypot"; flow:to_server,established; sid:1000018; rev:1;)
+    alert tcp any any -> any 21 (msg:"FTP connection to honeypot"; flow:to_server,established; sid:1000019; rev:1;)
+
+    # Slowloris attack detection
+    alert tcp any any -> any $HTTP_PORTS (msg:"Potential Slowloris attack"; flow:to_server,established; threshold:type both, track by_src, count 10, seconds 30; sid:1000020; rev:1;)

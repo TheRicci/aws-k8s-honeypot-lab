@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: modsec-proxy
+  namespace: honeynet
+  labels:
+    app: proxy
+    component: waf
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: proxy
+  template:
+    metadata:
+      labels:
+        app: proxy
+        component: waf
+    spec:
+      nodeSelector:
+        role: proxy
+      containers:
+      - name: modsec-proxy
+        # TODO: Replace with your registry image once built
+        image: modsec-proxy:latest
+        ports:
+        - containerPort: 80
+        - containerPort: 443
+        - containerPort: 990
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: modsecurity-config
+          mountPath: /etc/nginx/modsec/modsecurity.conf
+          subPath: modsecurity.conf
+        - name: modsecurity-crs-setup
+          mountPath: /etc/nginx/modsec/crs-setup.conf
+          subPath: crs-setup.conf
+        - name: modsecurity-crs
+          mountPath: /etc/nginx/modsec/owasp-crs
+        - name: ssl-cert
+          mountPath: /etc/nginx/cert.pem
+          subPath: cert.pem
+        - name: ssl-key
+          mountPath: /etc/nginx/key.pem
+          subPath: key.pem
+        - name: modsec-logs
+          mountPath: /var/log/modsec
+        - name: nginx-logs
+          mountPath: /var/log/nginx
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: nginx-config
+      - name: modsecurity-config
+        configMap:
+          name: modsecurity-config
+      - name: modsecurity-crs-setup
+        configMap:
+          name: modsecurity-crs-setup
+      - name: modsecurity-crs
+        configMap:
+          name: modsecurity-crs
+      - name: ssl-cert
+        secret:
+          secretName: modsec-ssl
+          items:
+          - key: cert.pem
+            path: cert.pem
+      - name: ssl-key
+        secret:
+          secretName: modsec-ssl
+          items:
+          - key: key.pem
+            path: key.pem
+      - name: modsec-logs
+        emptyDir: {}
+      - name: nginx-logs
+        emptyDir: {}

@@ -1,0 +1,82 @@
+# Educational folder explanations (auto-generated)
+**/.folder-explanation.md
+
+# Design documentation (educational, not for version control)
+.k8s-design-explanation.md
+.k8s-tutorial.md
+
+# Build artifacts
+*.log
+*.tmp
+dist/
+build/
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/.terraform.lock.hcl
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+
+# SSL certificates (sensitive)
+certs/
+*.pem
+*.key
+*.crt
+
+# Kubernetes secrets
+secrets/
+
+# Docker
+.dockerignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Node.js (if used)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Go
+vendor/
+*.test
+
+# Logs
+logs/
+*.log
+
+# Node labeling scripts (not needed - handled by CloudFormation/Terraform)
+cloud/k8s/node-labels/
+cloud/k8s/setup-node-labels.sh
+DONT-README.md
+docker-compose-base.yml
+ARCHITECTURE-VISUAL.md

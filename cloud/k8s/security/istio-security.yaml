@@ -1,0 +1,87 @@
+# Istio Service Mesh Security for SIEM
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: siem-strict-mtls
+  namespace: siem
+spec:
+  selector:
+    matchLabels:
+      component: siem
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: siem-ingress-policy
+  namespace: siem
+spec:
+  selector:
+    matchLabels:
+      component: siem
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["honeynet"]
+    to:
+    - operation:
+        ports: ["1514", "1515"]
+        methods: ["*"]
+  - from:
+    - source:
+        namespaces: ["siem"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: siem-jwt-validation
+  namespace: siem
+spec:
+  selector:
+    matchLabels:
+      app: wazuh-dashboard
+  jwtRules:
+  - issuer: "wazuh-dashboard"
+    jwksUri: "https://wazuh-dashboard.siem.svc.cluster.local:5601/api/v1/security/jwks"
+---
+# Istio Gateway for controlled external access
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: siem-gateway
+  namespace: siem
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: siem-tls
+    hosts:
+    - "siem.yourdomain.com"
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: wazuh-dashboard-vs
+  namespace: siem
+spec:
+  hosts:
+  - "siem.yourdomain.com"
+  gateways:
+  - siem-gateway
+  http:
+  - match:
+    - uri:
+        prefix: "/app/wazuh"
+    route:
+    - destination:
+        host: wazuh-dashboard
+        port:
+          number: 5601

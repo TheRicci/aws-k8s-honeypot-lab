@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: honeynet
+  labels:
+    name: honeynet
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: siem
+  labels:
+    name: siem

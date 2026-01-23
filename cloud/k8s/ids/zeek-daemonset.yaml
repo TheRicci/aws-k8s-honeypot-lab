@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: zeek-monitor
+  namespace: honeynet
+  labels:
+    app: zeek
+    component: ids
+spec:
+  selector:
+    matchLabels:
+      app: zeek
+  template:
+    metadata:
+      labels:
+        app: zeek
+        component: ids
+    spec:
+      nodeSelector:
+        role: honeypot  # Run on honeypot nodes
+      hostNetwork: true  # Access to host network interfaces
+      securityContext:
+        runAsUser: 0  # Run as root for network access
+      containers:
+      - name: zeek
+        image: zeek/zeek:latest
+        securityContext:
+          privileged: true
+          capabilities:
+            add: ["NET_ADMIN", "NET_RAW"]
+        command:
+          - zeek
+          - -i
+          - eth0
+          - local
+          - /opt/zeek/share/zeek/site/local.zeek
+          - /scripts/custom-logging.zeek
+        volumeMounts:
+        - name: zeek-custom-script
+          mountPath: /scripts/custom-logging.zeek
+          subPath: custom-logging.zeek
+        - name: zeek-logs
+          mountPath: /opt/zeek/logs
+        - name: host-logs
+          mountPath: /host/var/log/zeek
+      volumes:
+      - name: zeek-custom-script
+        configMap:
+          name: zeek-config
+          items:
+          - key: custom-logging.zeek
+            path: custom-logging.zeek
+      - name: zeek-logs
+        emptyDir: {}
+      - name: host-logs
+        hostPath:
+          path: /var/log/zeek
+          type: DirectoryOrCreate

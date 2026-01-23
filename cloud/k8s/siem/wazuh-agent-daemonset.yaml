@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: wazuh-agent
+  namespace: honeynet
+  labels:
+    app: wazuh-agent
+    component: security
+spec:
+  selector:
+    matchLabels:
+      app: wazuh-agent
+  template:
+    metadata:
+      labels:
+        app: wazuh-agent
+        component: security
+    spec:
+      nodeSelector:
+        role: honeypot  # Run on honeypot nodes
+      hostPID: true    # Access to host processes
+      hostIPC: true    # Access to host IPC
+      securityContext:
+        runAsUser: 0   # Run as root for system monitoring
+      containers:
+      - name: wazuh-agent
+        image: wazuh/wazuh-agent:4.12.0
+        securityContext:
+          privileged: true  # Required for Wazuh agent functionality
+        env:
+        - name: WAZUH_MANAGER
+          value: "wazuh-manager.siem.svc.cluster.local"  # Service in siem namespace
+        - name: WAZUH_REGISTRATION_SERVER
+          value: "wazuh-manager.siem.svc.cluster.local"
+        - name: WAZUH_AGENT_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        volumeMounts:
+        - name: wazuh-agent-logs
+          mountPath: /var/ossec/logs
+        - name: host-var-ossec
+          mountPath: /var/ossec
+        - name: host-proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: host-sys
+          mountPath: /host/sys
+          readOnly: true
+        - name: host-etc
+          mountPath: /host/etc
+          readOnly: true
+      volumes:
+      - name: wazuh-agent-logs
+        emptyDir: {}
+      - name: host-var-ossec
+        hostPath:
+          path: /var/ossec
+          type: DirectoryOrCreate
+      - name: host-proc
+        hostPath:
+          path: /proc
+      - name: host-sys
+        hostPath:
+          path: /sys
+      - name: host-etc
+        hostPath:
+          path: /etc

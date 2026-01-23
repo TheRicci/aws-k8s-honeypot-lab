@@ -1,0 +1,158 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zeek-config
+  namespace: honeynet
+data:
+  custom-logging.zeek: |
+    # Custom Zeek logging configuration for honeypot monitoring
+    # This script customizes Zeek's logging behavior for the honeynet environment
+
+    @load base/protocols/http
+    @load base/protocols/ssl
+    @load base/protocols/ssh
+    @load base/protocols/ftp
+    @load base/protocols/dns
+    @load base/protocols/conn
+    @load base/protocols/smtp
+    @load policy/protocols/ssl/validate-certs
+
+    # Enable JSON logging format for better SIEM integration
+    @load policy/tuning/json-logs
+
+    # Custom HTTP logging with additional fields
+    redef HTTP::log_policy = {
+        [$pred(n: any) = {
+            if ( n?$http ) {
+                # Log suspicious HTTP methods
+                if ( n$http$method == "CONNECT" || n$http$method == "TRACE" || n$http$method == "TRACK" ) {
+                    NOTICE([$note=Honeypot_HTTP_Method,
+                           $msg=fmt("Suspicious HTTP method %s from %s to %s:%s",
+                                   n$http$method, n$id$orig_h, n$id$resp_h, n$id$resp_p),
+                           $conn=n]);
+                }
+
+                # Log potential web shell access
+                if ( /shell\.php/ in n$http$uri || /cmd\.php/ in n$http$uri || /backdoor/ in n$http$uri ) {
+                    NOTICE([$note=Honeypot_Web_Shell,
+                           $msg=fmt("Potential web shell access: %s%s", n$http$host, n$http$uri),
+                           $conn=n]);
+                }
+            }
+            return T;
+        }]
+    };
+
+    # Enhanced SSL logging
+    redef SSL::log_policy = {
+        [$pred(n: any) = {
+            if ( n?$ssl ) {
+                # Log SSL connections to honeypot ports
+                if ( n$id$resp_p == 443/tcp || n$id$resp_p == 990/tcp ) {
+                    NOTICE([$note=Honeypot_SSL_Connection,
+                           $msg=fmt("SSL connection to honeypot: %s:%s using %s",
+                                   n$id$resp_h, n$id$resp_p, n$ssl$version),
+                           $conn=n]);
+                }
+            }
+            return T;
+        }]
+    };
+
+    # SSH logging enhancements
+    redef SSH::log_policy = {
+        [$pred(n: any) = {
+            if ( n?$ssh ) {
+                # Log all SSH connections (honeypot will see these)
+                NOTICE([$note=Honeypot_SSH_Connection,
+                       $msg=fmt("SSH connection: %s -> %s:%s",
+                               n$id$orig_h, n$id$resp_h, n$id$resp_p),
+                       $conn=n]);
+            }
+            return T;
+        }]
+    };
+
+    # FTP logging enhancements
+    redef FTP::log_policy = {
+        [$pred(n: any) = {
+            if ( n?$ftp ) {
+                # Log FTP commands that might indicate attacks
+                if ( n$ftp$command == "USER" && n$ftp$arg == "anonymous" ) {
+                    NOTICE([$note=Honeypot_FTP_Anonymous,
+                           $msg=fmt("Anonymous FTP login attempt: %s", n$id$orig_h),
+                           $conn=n]);
+                }
+            }
+            return T;
+        }]
+    };
+
+    # DNS logging for suspicious queries
+    redef DNS::log_policy = {
+        [$pred(n: any) = {
+            if ( n?$dns ) {
+                # Log DNS queries that might indicate reconnaissance
+                if ( n$dns$query == "localhost" || n$dns$query == "127.0.0.1" ) {
+                    NOTICE([$note=Honeypot_DNS_Recon,
+                           $msg=fmt("Suspicious DNS query: %s from %s", n$dns$query, n$id$orig_h),
+                           $conn=n]);
+                }
+            }
+            return T;
+        }]
+    };
+
+    # Connection logging for long connections (potential DoS)
+    event connection_state_remove(c: connection) {
+        # Log connections that lasted more than 5 minutes
+        if ( c$duration > 300secs ) {
+            NOTICE([$note=Honeypot_Long_Connection,
+                   $msg=fmt("Long connection: %s -> %s:%s lasted %.2f seconds",
+                           c$id$orig_h, c$id$resp_h, c$id$resp_p, c$duration),
+                   $conn=c]);
+        }
+
+        # Log failed connections (potential scanning)
+        if ( c$conn$state == "REJ" || c$conn$state == "RST" ) {
+            local service = "unknown";
+            if ( c$id$resp_p == 22/tcp ) { service = "ssh"; }
+            else if ( c$id$resp_p == 80/tcp ) { service = "http"; }
+            else if ( c$id$resp_p == 443/tcp ) { service = "https"; }
+            else if ( c$id$resp_p == 21/tcp ) { service = "ftp"; }
+
+            NOTICE([$note=Honeypot_Connection_Rejected,
+                   $msg=fmt("Rejected connection to %s (%s): %s -> %s:%s",
+                           service, c$conn$state, c$id$orig_h, c$id$resp_h, c$id$resp_p),
+                   $conn=c]);
+        }
+    }
+
+    # SMTP logging for potential spam/malware distribution
+    redef SMTP::log_policy = {
+        [$pred(n: any) = {
+            if ( n?$smtp ) {
+                # Log SMTP connections to honeypot
+                NOTICE([$note=Honeypot_SMTP_Connection,
+                       $msg=fmt("SMTP connection to honeypot: %s -> %s:%s",
+                               n$id$orig_h, n$id$resp_h, n$id$resp_p),
+                       $conn=n]);
+            }
+            return T;
+        }]
+    };
+
+    # Custom notice policy for honeypot-specific alerts
+    redef Notice::policy += {
+        [$pred(n: Notice::Info) = {
+            # Suppress some noisy default notices
+            if ( n$note == SSH::Login ) {
+                # We want to see SSH logins
+                return Notice::ACTION_LOG;
+            }
+            return Notice::ACTION_LOG;
+        }]
+    };
+
+    # Log to JSON format for better SIEM integration
+    @load policy/tuning/json-logs

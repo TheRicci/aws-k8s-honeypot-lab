@@ -1,0 +1,89 @@
+# Node taints and labels for SIEM isolation
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-isolation-config
+  namespace: kube-system
+data:
+  siem-node-commands: |
+    # Label and taint SIEM nodes (run these commands on your SIEM nodes)
+    kubectl label nodes <siem-node-1> role=siem security-level=high
+    kubectl label nodes <siem-node-2> role=siem security-level=high
+
+    kubectl taint nodes <siem-node-1> siem-only=true:NoSchedule
+    kubectl taint nodes <siem-node-2> siem-only=true:NoSchedule
+
+    # Label honeypot nodes
+    kubectl label nodes <honeypot-node-1> role=honeypot security-level=medium
+    kubectl label nodes <honeypot-node-2> role=honeypot security-level=medium
+
+    # Label proxy nodes
+    kubectl label nodes <proxy-node-1> role=proxy security-level=low
+---
+# SIEM Node Affinity and Anti-Affinity
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: siem-node-affinity
+  namespace: siem
+data:
+  affinity-rules: |
+    # Add this to SIEM deployments for node isolation
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: role
+                operator: In
+                values:
+                - siem
+              - key: security-level
+                operator: In
+                values:
+                - high
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  component: siem
+              topologyKey: kubernetes.io/hostname
+      tolerations:
+      - key: siem-only
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+---
+# Security Context for SIEM pods
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: siem-security-context
+  namespace: siem
+data:
+  security-context.yaml: |
+    # Add this to all SIEM pod specs
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    containers:
+    - securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        capabilities:
+          drop:
+          - ALL
+          add:
+          - NET_BIND_SERVICE  # Only if needed
+        seccompProfile:
+          type: RuntimeDefault

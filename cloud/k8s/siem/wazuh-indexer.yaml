@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wazuh-indexer
+  namespace: siem
+  labels:
+    app: wazuh-indexer
+    component: siem
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wazuh-indexer
+  template:
+    metadata:
+      labels:
+        app: wazuh-indexer
+        component: siem
+    spec:
+      nodeSelector:
+        role: siem
+      containers:
+      - name: wazuh-indexer
+        image: wazuh/wazuh-indexer:4.12.0
+        ports:
+        - containerPort: 9200
+        env:
+        - name: OPENSEARCH_JAVA_OPTS
+          value: "-Xms1g -Xmx1g"
+        volumeMounts:
+        - name: indexer-data
+          mountPath: /var/lib/wazuh-indexer
+        # SSL certificates
+        - name: root-ca-cert
+          mountPath: /usr/share/wazuh-indexer/certs/root-ca.pem
+          subPath: root-ca.pem
+        - name: indexer-key
+          mountPath: /usr/share/wazuh-indexer/certs/wazuh.indexer.key
+          subPath: wazuh.indexer-key.pem
+        - name: indexer-cert
+          mountPath: /usr/share/wazuh-indexer/certs/wazuh.indexer.pem
+          subPath: wazuh.indexer.pem
+        - name: admin-cert
+          mountPath: /usr/share/wazuh-indexer/certs/admin.pem
+          subPath: admin.pem
+        - name: admin-key
+          mountPath: /usr/share/wazuh-indexer/certs/admin-key.pem
+          subPath: admin-key.pem
+        # Configuration
+        - name: indexer-config
+          mountPath: /usr/share/wazuh-indexer/opensearch.yml
+          subPath: opensearch.yml
+        - name: internal-users
+          mountPath: /usr/share/wazuh-indexer/opensearch-security/internal_users.yml
+          subPath: internal_users.yml
+      volumes:
+      - name: indexer-data
+        emptyDir: {}
+      # SSL certificates from secrets
+      - name: root-ca-cert
+        secret:
+          secretName: wazuh-certs
+          items:
+          - key: root-ca.pem
+            path: root-ca.pem
+      - name: indexer-key
+        secret:
+          secretName: wazuh-certs
+          items:
+          - key: wazuh.indexer-key.pem
+            path: wazuh.indexer-key.pem
+      - name: indexer-cert
+        secret:
+          secretName: wazuh-certs
+          items:
+          - key: wazuh.indexer.pem
+            path: wazuh.indexer.pem
+      - name: admin-cert
+        secret:
+          secretName: wazuh-certs
+          items:
+          - key: admin.pem
+            path: admin.pem
+      - name: admin-key
+        secret:
+          secretName: wazuh-certs
+          items:
+          - key: admin-key.pem
+            path: admin-key.pem
+      # Configuration from configmaps
+      - name: indexer-config
+        configMap:
+          name: wazuh-indexer-config
+      - name: internal-users
+        configMap:
+          name: wazuh-indexer-internal-users
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wazuh-indexer
+  namespace: siem
+  labels:
+    app: wazuh-indexer
+spec:
+  selector:
+    app: wazuh-indexer
+  ports:
+  - name: http
+    port: 9200
+    targetPort: 9200
+  type: ClusterIP

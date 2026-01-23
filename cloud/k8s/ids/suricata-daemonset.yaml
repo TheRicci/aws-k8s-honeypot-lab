@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: suricata-ids
+  namespace: honeynet
+  labels:
+    app: suricata
+    component: ids
+spec:
+  selector:
+    matchLabels:
+      app: suricata
+  template:
+    metadata:
+      labels:
+        app: suricata
+        component: ids
+    spec:
+      nodeSelector:
+        role: honeypot  # Run on honeypot nodes
+      hostNetwork: true  # Access to host network interfaces
+      securityContext:
+        runAsUser: 0  # Run as root for network access
+      containers:
+      - name: suricata
+        image: jasonish/suricata:7.0.10
+        securityContext:
+          privileged: true  # Required for AF_PACKET
+          capabilities:
+            add: ["NET_ADMIN", "NET_RAW"]
+        command:
+          - suricata
+          - --af-packet=eth0
+          - --runmode=autofp
+          - -c
+          - /etc/suricata/suricata.yaml
+        volumeMounts:
+        - name: suricata-config
+          mountPath: /etc/suricata/suricata.yaml
+          subPath: suricata.yaml
+        - name: suricata-rules
+          mountPath: /etc/suricata/rules
+        - name: suricata-logs
+          mountPath: /var/log/suricata
+        - name: host-logs
+          mountPath: /host/var/log/suricata
+      volumes:
+      - name: suricata-config
+        configMap:
+          name: suricata-config
+      - name: suricata-rules
+        configMap:
+          name: suricata-rules
+      - name: suricata-logs
+        emptyDir: {}
+      - name: host-logs
+        hostPath:
+          path: /var/log/suricata
+          type: DirectoryOrCreate

@@ -1,0 +1,112 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wazuh-dashboard
+  namespace: siem
+  labels:
+    app: wazuh-dashboard
+    component: siem
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wazuh-dashboard
+  template:
+    metadata:
+      labels:
+        app: wazuh-dashboard
+        component: siem
+    spec:
+      nodeSelector:
+        role: siem
+      containers:
+      - name: wazuh-dashboard
+        image: wazuh/wazuh-dashboard:4.12.0
+        ports:
+        - containerPort: 5601
+        env:
+        - name: INDEXER_USERNAME
+          value: "admin"
+        - name: INDEXER_PASSWORD
+          value: "SecretPassword"
+        - name: WAZUH_API_URL
+          value: "https://wazuh-manager.siem.svc.cluster.local"
+        - name: DASHBOARD_USERNAME
+          value: "kibanaserver"
+        - name: DASHBOARD_PASSWORD
+          value: "kibanaserver"
+        - name: API_USERNAME
+          value: "wazuh-wui"
+        - name: API_PASSWORD
+          value: "MyS3cr37P450r.*-"
+        volumeMounts:
+        # SSL certificates
+        - name: dashboard-cert
+          mountPath: /usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem
+          subPath: wazuh.dashboard.pem
+        - name: dashboard-key
+          mountPath: /usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem
+          subPath: wazuh.dashboard-key.pem
+        - name: root-ca-cert
+          mountPath: /usr/share/wazuh-dashboard/certs/root-ca.pem
+          subPath: root-ca.pem
+        # Configuration
+        - name: dashboard-config
+          mountPath: /usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
+          subPath: opensearch_dashboards.yml
+        - name: wazuh-config
+          mountPath: /usr/share/wazuh-dashboard/data/wazuh/config/wazuh.yml
+          subPath: wazuh.yml
+        # Persistent data
+        - name: dashboard-config-data
+          mountPath: /usr/share/wazuh-dashboard/data/wazuh/config
+        - name: dashboard-custom
+          mountPath: /usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
+      volumes:
+      # SSL certificates from secrets
+      - name: dashboard-cert
+        secret:
+          secretName: wazuh-certs
+          items:
+          - key: wazuh.dashboard.pem
+            path: wazuh.dashboard.pem
+      - name: dashboard-key
+        secret:
+          secretName: wazuh-certs
+          items:
+          - key: wazuh.dashboard-key.pem
+            path: wazuh.dashboard-key.pem
+      - name: root-ca-cert
+        secret:
+          secretName: wazuh-certs
+          items:
+          - key: root-ca.pem
+            path: root-ca.pem
+      # Configuration from configmaps
+      - name: dashboard-config
+        configMap:
+          name: wazuh-dashboard-config
+      - name: wazuh-config
+        configMap:
+          name: wazuh-dashboard-wazuh-config
+      # Persistent volumes
+      - name: dashboard-config-data
+        emptyDir: {}
+      - name: dashboard-custom
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wazuh-dashboard
+  namespace: siem
+  labels:
+    app: wazuh-dashboard
+spec:
+  selector:
+    app: wazuh-dashboard
+  ports:
+  - name: http
+    port: 5601
+    targetPort: 5601
+  type: LoadBalancer  # Expose externally for access

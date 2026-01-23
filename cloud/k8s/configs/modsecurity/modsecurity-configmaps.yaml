@@ -1,0 +1,362 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: honeynet
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    error_log /var/log/nginx/error.log notice;
+    pid /var/run/nginx.pid;
+
+    events {
+        worker_connections 1024;
+        use epoll;
+        multi_accept on;
+    }
+
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for"';
+
+        access_log /var/log/nginx/access.log main;
+
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        client_max_body_size 100M;
+
+        # ModSecurity connector
+        modsecurity on;
+        modsecurity_rules_file /etc/nginx/modsec/modsecurity.conf;
+
+        upstream honeypot_backend {
+            server honeypot.honeynet.svc.cluster.local:80;
+        }
+
+        server {
+            listen 80;
+            server_name _;
+
+            # ModSecurity WAF
+            location / {
+                modsecurity_rules_file /etc/nginx/modsec/crs-setup.conf;
+                modsecurity_rules '
+                    Include /etc/nginx/modsec/owasp-crs/crs-setup.conf
+                    Include /etc/nginx/modsec/owasp-crs/rules/*.conf
+                ';
+
+                proxy_pass http://honeypot_backend;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+
+            # Health check endpoint
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+        }
+
+        server {
+            listen 443 ssl http2;
+            server_name _;
+
+            ssl_certificate /etc/nginx/cert.pem;
+            ssl_certificate_key /etc/nginx/key.pem;
+            ssl_protocols TLSv1.2 TLSv1.3;
+            ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384;
+            ssl_prefer_server_ciphers off;
+
+            # ModSecurity WAF for HTTPS
+            location / {
+                modsecurity_rules_file /etc/nginx/modsec/crs-setup.conf;
+                modsecurity_rules '
+                    Include /etc/nginx/modsec/owasp-crs/crs-setup.conf
+                    Include /etc/nginx/modsec/owasp-crs/rules/*.conf
+                ';
+
+                proxy_pass http://honeypot_backend;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+        }
+
+        # FTP over TLS proxy
+        stream {
+            upstream ftp_backend {
+                server honeypot.honeynet.svc.cluster.local:21;
+            }
+
+            server {
+                listen 990 ssl;
+                proxy_pass ftp_backend;
+
+                ssl_certificate /etc/nginx/cert.pem;
+                ssl_certificate_key /etc/nginx/key.pem;
+                ssl_protocols TLSv1.2 TLSv1.3;
+            }
+        }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: modsecurity-config
+  namespace: honeynet
+data:
+  modsecurity.conf: |
+    load_module modules/ngx_http_modsecurity_module.so;
+    load_module modules/ngx_stream_module.so;
+
+    worker_processes  1;
+
+    error_log  /var/log/nginx/error.log info;
+    pid        /var/run/nginx.pid;
+
+    events {
+        worker_connections  1024;
+    }
+
+    http {
+        resolver 127.0.0.11 valid=30s;
+        log_format  main  '$remote_addr - $remote_user [$time_local] '
+                          '"$request" $status $body_bytes_sent '
+                          '"$http_referer" "$http_user_agent"';
+
+        # -- ModSecurity configuration (detection only) --
+        modsecurity on;
+        modsecurity_rules_file /etc/nginx/modsec/modsecurity.conf;
+      
+        sendfile        on;
+        keepalive_timeout  65;
+
+        server {
+            listen       443 ssl;
+            server_name _;   # accept any hostname
+
+            # --- TLS Termination ---
+            ssl_certificate     /etc/nginx/cert.pem;
+            ssl_certificate_key /etc/nginx/key.pem;
+            ssl_protocols       TLSv1.2 TLSv1.3;
+            ssl_ciphers         HIGH:!aNULL:!MD5;
+
+            # --- Access & Audit Logs (+ ModSecurity audit) ---
+            access_log  /var/log/nginx/access.log  main;
+            error_log   /var/log/nginx/error.log  warn;
+
+            # --- The real honeypot backend ---
+            location / {
+                proxy_pass         http://honeypot:80/;
+                proxy_set_header   Host $host;
+                proxy_set_header   X-Real-IP $remote_addr;
+                proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+            }
+        }
+
+        # (Optional) redirect HTTP→HTTPS
+        server {
+            listen      80;
+            return      301 https://$host$request_uri/;
+        }
+    }
+    stream {
+        # define a TLS “listener” on the FTPS port (implicit TLS on 990)
+        server {
+            listen     990 ssl;
+            proxy_pass  honeypot:21;    # forward decrypted TCP to Go FTP server
+            ssl_certificate     /etc/nginx/cert.pem;
+            ssl_certificate_key /etc/nginx/key.pem;
+            ssl_protocols       TLSv1.2 TLSv1.3;
+            
+            proxy_protocol on;   # instructs nginx to send PROXY v1 header to upstream
+        }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: modsecurity-crs-setup
+  namespace: honeynet
+data:
+  crs-setup.conf: |
+    # OWASP CRS Setup for ModSecurity
+    SecAction \
+      "id:900000,\
+       phase:1,\
+       nolog,\
+       pass,\
+       t:none,\
+       setvar:tx.crs_setup_version=400"
+
+    # Default setup for OWASP CRS
+    SecAction \
+      "id:900001,\
+       phase:1,\
+       nolog,\
+       pass,\
+       t:none,\
+       setvar:tx.paranoia_level=2"
+
+    # Enable blocking
+    SecAction \
+      "id:900002,\
+       phase:1,\
+       nolog,\
+       pass,\
+       t:none,\
+       setvar:tx.blocking_paranoia_level=2"
+
+    # Disable rules for honeypot testing (we want to see attacks)
+    SecAction \
+      "id:900003,\
+       phase:1,\
+       nolog,\
+       pass,\
+       t:none,\
+       setvar:tx.crs_validate_utf8_encoding=0"
+
+    # Custom rule exclusions for honeypot
+    SecRuleRemoveById 942100 942110 942120  # SQL injection rules that might be too aggressive
+    SecRuleRemoveById 941100 941110 941120  # XSS rules that might block test payloads
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: modsecurity-crs
+  namespace: honeynet
+data:
+  REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf: |
+    # Custom exclusions for honeypot environment
+    # Allow some attack patterns for research purposes
+
+    # Disable certain rules that might interfere with honeypot testing
+    SecRuleRemoveById 920100  # Invalid HTTP Request Line
+    SecRuleRemoveById 920120  # Attempted bypass of security restrictions
+    SecRuleRemoveById 920121  # Attempted bypass of security restrictions
+
+  REQUEST-901-INITIALIZATION.conf: |
+    # Basic initialization rules for testing
+    SecAction \
+      "id:901001,\
+       phase:1,\
+       nolog,\
+       pass,\
+       t:none,\
+       setvar:tx.inbound_anomaly_score=0,\
+       setvar:tx.outbound_anomaly_score=0"
+
+  REQUEST-905-COMMON-EXCEPTIONS.conf: |
+    # Common exceptions for honeypot testing
+    SecRule REQUEST_URI "@beginsWith /honeypot" \
+      "id:905001,\
+       phase:1,\
+       pass,\
+       nolog,\
+       ctl:ruleRemoveById=942100-942199"
+
+  REQUEST-910-IP-REPUTATION.conf: |
+    # Basic IP reputation checks
+    SecRule REQUEST_HEADERS:X-Forwarded-For "@ipMatchFromFile /etc/nginx/modsec/blocked-ips.txt" \
+      "id:910001,\
+       phase:1,\
+       deny,\
+       status:403,\
+       msg:'IP address blocked by reputation list'"
+
+  REQUEST-920-PROTOCOL-ENFORCEMENT.conf: |
+    # Protocol enforcement with honeypot-friendly settings
+    SecRule REQUEST_PROTOCOL "!@streq HTTP/1.1" \
+      "id:920001,\
+       phase:1,\
+       t:none,\
+       deny,\
+       status:400,\
+       msg:'Invalid HTTP protocol version'"
+
+  REQUEST-930-APPLICATION-ATTACK-LFI.conf: |
+    # Local File Inclusion with honeypot logging
+    SecRule REQUEST_URI "@pmFromFile /etc/nginx/modsec/lfi-patterns.txt" \
+      "id:930001,\
+       phase:1,\
+       pass,\
+       nolog,\
+       msg:'Local File Inclusion attempt detected'"
+
+  REQUEST-931-APPLICATION-ATTACK-RFI.conf: |
+    # Remote File Inclusion
+    SecRule REQUEST_URI "@contains http://" \
+      "id:931001,\
+       phase:1,\
+       pass,\
+       nolog,\
+       msg:'Potential Remote File Inclusion attempt'"
+
+  REQUEST-932-APPLICATION-ATTACK-RCE.conf: |
+    # Remote Code Execution
+    SecRule ARGS "@pm system exec passthru shell_exec" \
+      "id:932001,\
+       phase:1,\
+       pass,\
+       nolog,\
+       msg:'Potential Remote Code Execution attempt'"
+
+  REQUEST-933-APPLICATION-ATTACK-PHP.conf: |
+    # PHP specific attacks
+    SecRule REQUEST_URI "@contains .php" \
+      "id:933001,\
+       phase:1,\
+       chain,\
+       pass,\
+       nolog,\
+       msg:'PHP file access'"
+    SecRule ARGS "@contains <?php" \
+      "chain"
+
+  REQUEST-941-APPLICATION-ATTACK-XSS.conf: |
+    # Cross Site Scripting with honeypot logging
+    SecRule ARGS "@rx <script[^>]*>.*?</script>" \
+      "id:941001,\
+       phase:1,\
+       pass,\
+       nolog,\
+       msg:'XSS attempt with script tags'"
+
+  REQUEST-942-APPLICATION-ATTACK-SQLI.conf: |
+    # SQL Injection with honeypot logging
+    SecRule ARGS "@detectSQLi" \
+      "id:942001,\
+       phase:1,\
+       pass,\
+       nolog,\
+       msg:'SQL Injection attempt detected'"
+
+  RESPONSE-950-DATA-LEAKAGES.conf: |
+    # Data leakages detection
+    SecRule RESPONSE_BODY "@contains password" \
+      "id:950001,\
+       phase:3,\
+       pass,\
+       nolog,\
+       msg:'Potential password leakage in response'"
+
+  RESPONSE-980-CORRELATION.conf: |
+    # Correlation rules for honeypot analysis
+    SecRule TX:ANOMALY_SCORE "@gt 10" \
+      "id:980001,\
+       phase:3,\
+       pass,\
+       nolog,\
+       msg:'High anomaly score detected'"

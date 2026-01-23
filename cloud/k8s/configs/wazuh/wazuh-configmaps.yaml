@@ -1,0 +1,282 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wazuh-manager-config
+  namespace: siem
+data:
+  ossec.conf: |
+    <?xml version="1.0" encoding="UTF-8"?>
+    <ossec_config>
+      <global>
+        <jsonout_output>yes</jsonout_output>
+        <alerts_log>yes</alerts_log>
+        <logall>yes</logall>
+        <logall_json>yes</logall_json>
+        <email_notification>no</email_notification>
+        <smtp_server>smtp.example.wazuh.com</smtp_server>
+        <email_from>wazuh@example.wazuh.com</email_from>
+        <email_maxperhour>12</email_maxperhour>
+        <email_log_source>alerts.log</email_log_source>
+        <queue_size>131072</queue_size>
+      </global>
+
+      <logging>
+        <log_format>plain,json</log_format>
+      </logging>
+
+      <alerts>
+        <log_alert_level>3</log_alert_level>
+        <email_alert_level>12</email_alert_level>
+      </alerts>
+
+      <remote>
+        <connection>secure</connection>
+        <port>1514</port>
+        <protocol>tcp</protocol>
+      </remote>
+
+      <remote>
+        <connection>secure</connection>
+        <port>1515</port>
+        <protocol>tcp</protocol>
+      </remote>
+
+      <syslog>
+        <enabled>yes</enabled>
+        <port>514</port>
+        <protocol>udp</protocol>
+      </syslog>
+
+      <!-- File integrity monitoring -->
+      <syscheck>
+        <disabled>no</disabled>
+        <frequency>43200</frequency>
+        <scan_on_start>yes</scan_on_start>
+        <alert_new_files>yes</alert_new_files>
+
+        <!-- Directories to monitor -->
+        <directories check_all="yes" realtime="yes">/etc</directories>
+        <directories check_all="yes" realtime="yes">/usr/bin</directories>
+        <directories check_all="yes" realtime="yes">/usr/sbin</directories>
+        <directories check_all="yes">/var/log</directories>
+
+        <!-- Ignore files -->
+        <ignore>/etc/mtab</ignore>
+        <ignore>/etc/hosts.deny</ignore>
+        <ignore>/etc/mail/statistics</ignore>
+        <ignore>/etc/random-seed</ignore>
+        <ignore>/etc/random.seed</ignore>
+        <ignore>/etc/adjtime</ignore>
+        <ignore>/etc/httpd/logs</ignore>
+      </syscheck>
+
+      <!-- Log analysis -->
+      <localfile>
+        <log_format>syslog</log_format>
+        <location>/var/log/nginx/access.log</location>
+      </localfile>
+
+      <localfile>
+        <log_format>syslog</log_format>
+        <location>/var/log/nginx/error.log</location>
+      </localfile>
+
+      <localfile>
+        <log_format>json</log_format>
+        <location>/var/log/modsec/*.log</location>
+      </localfile>
+
+      <localfile>
+        <log_format>json</log_format>
+        <location>/var/log/suricata/eve.json</location>
+      </localfile>
+
+      <localfile>
+        <log_format>json</log_format>
+        <location>/var/log/zeek/*/conn.log</location>
+      </localfile>
+
+      <localfile>
+        <log_format>json</log_format>
+        <location>/var/log/zeek/*/http.log</location>
+      </localfile>
+
+      <!-- Rules -->
+      <ruleset>
+        <decoder_dir>ruleset/decoders</decoder_dir>
+        <rule_dir>ruleset/rules</rule_dir>
+        <rule_exclude>0215-policy_rules.xml</rule_exclude>
+        <list>etc/lists/audit-keys</list>
+        <list>etc/lists/amazon/aws-eventnames</list>
+        <list>etc/lists/security-eventchannel</list>
+      </ruleset>
+
+      <!-- Active response -->
+      <active-response>
+        <disabled>yes</disabled>
+      </active-response>
+
+      <!-- Command output -->
+      <command>
+        <name>disable-account</name>
+        <executable>disable-account</executable>
+        <timeout_allowed>yes</timeout_allowed>
+      </command>
+
+      <command>
+        <name>restart-ossec</name>
+        <executable>restart-ossec</executable>
+        <timeout_allowed>yes</timeout_allowed>
+      </command>
+
+      <command>
+        <name>firewall-drop</name>
+        <executable>firewall-drop</executable>
+        <timeout_allowed>yes</timeout_allowed>
+      </command>
+
+      <!-- Agentless monitoring -->
+      <agentless>
+        <type>ssh_integrity_check_linux</type>
+        <frequency>3600</frequency>
+        <host>localhost</host>
+        <state>periodic</state>
+      </agentless>
+
+      <!-- Wodles -->
+      <wodle name="syscollector">
+        <disabled>no</disabled>
+        <interval>1h</interval>
+        <scan_on_start>yes</scan_on_start>
+        <hardware>yes</hardware>
+        <os>yes</os>
+        <network>yes</network>
+        <packages>yes</packages>
+        <ports all="no">yes</ports>
+        <processes>yes</processes>
+      </wodle>
+
+      <wodle name="vulnerability-detector">
+        <disabled>no</disabled>
+        <interval>5m</interval>
+        <ignore_time>6h</ignore_time>
+        <run_on_start>yes</run_on_start>
+
+        <feed name="nvd">
+          <disabled>no</disabled>
+          <update_interval>1h</update_interval>
+        </feed>
+      </wodle>
+
+    </ossec_config>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wazuh-indexer-config
+  namespace: siem
+data:
+  opensearch.yml: |
+    network.host: 0.0.0.0
+    path.data: /var/lib/wazuh-indexer
+    path.logs: /var/log/wazuh-indexer
+
+    http.port: 9200
+    http.host: 0.0.0.0
+
+    discovery.seed_hosts: ["wazuh-indexer.siem.svc.cluster.local:9300"]
+    cluster.initial_master_nodes: ["wazuh-indexer"]
+
+    node.name: "wazuh-indexer"
+    node.roles: [master, data, coordinating_only]
+    path.repo: ["/usr/share/wazuh-indexer/backup"]
+
+    bootstrap.memory_lock: true
+
+    plugins.security.ssl.transport.pemcert_filepath: /usr/share/wazuh-indexer/certs/wazuh.indexer.pem
+    plugins.security.ssl.transport.pemkey_filepath: /usr/share/wazuh-indexer/certs/wazuh.indexer.key
+    plugins.security.ssl.transport.pemtrustedcas_filepath: /usr/share/wazuh-indexer/certs/root-ca.pem
+    plugins.security.ssl.transport.enforce_hostname_verification: false
+
+    plugins.security.ssl.http.enabled: true
+    plugins.security.ssl.http.pemcert_filepath: /usr/share/wazuh-indexer/certs/wazuh.indexer.pem
+    plugins.security.ssl.http.pemkey_filepath: /usr/share/wazuh-indexer/certs/wazuh.indexer.key
+    plugins.security.ssl.http.pemtrustedcas_filepath: /usr/share/wazuh-indexer/certs/root-ca.pem
+
+    plugins.security.allow_unsafe_demod: true
+    plugins.security.authcz.admin_dn: ["CN=admin,OU=Wazuh,O=Wazuh,L=California,C=US"]
+    plugins.security.check_snapshot_restore_write_privileges: true
+    plugins.security.enable_snapshot_restore_privilege: true
+    plugins.security.nodes_dn: ["CN=wazuh.indexer,OU=Wazuh,O=Wazuh,L=California,C=US"]
+    plugins.security.restapi.roles_enabled: ["all_access", "security_rest_api_access"]
+    plugins.security.ssl_cert_reload_enabled: false
+    plugins.security.system_indices.enabled: true
+    plugins.security.system_indices.indices: [".opendistro-alerting-config", ".opendistro-alerting-alert*", ".opendistro-anomaly-results*", ".opendistro-anomaly-detector*", ".opendistro-anomaly-checkpoints", ".opendistro-ism-managed-index*", ".wazuh-*"]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wazuh-indexer-internal-users
+  namespace: siem
+data:
+  internal_users.yml: |
+    _meta:
+      type: "internalusers"
+      config_version: 2
+
+    admin:
+      hash: "$2y$12$88IFVl6Hk9gzNzXNCrLtOe6HqHK3VUkfbEJIUHH6X5YehfPod6XfO"
+      reserved: true
+      backend_roles:
+      - "admin"
+      description: "Admin user"
+
+    kibanaserver:
+      hash: "$2y$12$4AcgAt3xwOWadA5s5blL6ev39OXDNhmO3YLWxhNPxW0OBLf6kzUzW"
+      reserved: true
+      backend_roles:
+      - "kibanauser"
+      - "readall"
+      description: "kibana server user"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wazuh-dashboard-config
+  namespace: siem
+data:
+  opensearch_dashboards.yml: |
+    server.host: "0.0.0.0"
+    server.port: 5601
+
+    opensearch.hosts: ["https://wazuh-indexer.siem.svc.cluster.local:9200"]
+    opensearch.ssl.verificationMode: certificate
+    opensearch.username: "kibanaserver"
+    opensearch.password: "kibanaserver"
+    opensearch.requestTimeout: 60000
+    opensearch.shardTimeout: 60000
+    opensearch.ssl.certificateAuthorities: ["/usr/share/wazuh-dashboard/certs/root-ca.pem"]
+    opensearch.ssl.certificate: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard.pem"
+    opensearch.ssl.key: "/usr/share/wazuh-dashboard/certs/wazuh-dashboard-key.pem"
+
+    opensearch_security.multitenancy.enabled: false
+    opensearch_security.readonly_mode.roles: ["kibana_read_only"]
+    opensearch_security.cookie.secure: false
+
+    newsfeed.enabled: false
+    telemetry.optIn: false
+    telemetry.enabled: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wazuh-dashboard-wazuh-config
+  namespace: siem
+data:
+  wazuh.yml: |
+    hosts:
+      - url: "https://wazuh-manager.siem.svc.cluster.local"
+        port: 55000
+        username: "wazuh-wui"
+        password: "MyS3cr37P450r.*-"
+        run_as: false

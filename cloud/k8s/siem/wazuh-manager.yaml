@@ -1,0 +1,193 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wazuh-manager
+  namespace: siem
+  labels:
+    app: wazuh-manager
+    component: siem
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wazuh-manager
+  template:
+    metadata:
+      labels:
+        app: wazuh-manager
+        component: siem
+    spec:
+      nodeSelector:
+        role: siem
+      containers:
+      - name: wazuh-manager
+        image: wazuh/wazuh-manager:4.12.0
+        command: ["/usr/local/bin/patch-filebeat.sh"]
+        ports:
+        - containerPort: 1514
+        - containerPort: 1515
+        - containerPort: 514
+          protocol: UDP
+        - containerPort: 55000
+        env:
+        - name: INDEXER_URL
+          value: "https://wazuh-indexer.siem.svc.cluster.local:9200"
+        - name: INDEXER_USERNAME
+          value: "admin"
+        - name: INDEXER_PASSWORD
+          value: "SecretPassword"
+        - name: FILEBEAT_SSL_VERIFICATION_MODE
+          value: "full"
+        - name: SSL_CERTIFICATE_AUTHORITIES
+          value: "/etc/ssl/root-ca.pem"
+        - name: SSL_CERTIFICATE
+          value: "/etc/ssl/filebeat.pem"
+        - name: SSL_KEY
+          value: "/etc/ssl/filebeat.key"
+        - name: API_USERNAME
+          value: "wazuh-wui"
+        - name: API_PASSWORD
+          value: "MyS3cr37P450r.*-"
+        volumeMounts:
+        - name: wazuh-ruleset
+          mountPath: /var/ossec/ruleset
+        - name: wazuh-api-config
+          mountPath: /var/ossec/api/configuration
+        - name: wazuh-etc
+          mountPath: /var/ossec/etc
+        - name: wazuh-logs
+          mountPath: /var/ossec/logs
+        - name: wazuh-queue
+          mountPath: /var/ossec/queue
+        - name: wazuh-var-multigroups
+          mountPath: /var/ossec/var/multigroups
+        - name: wazuh-integrations
+          mountPath: /var/ossec/integrations
+        - name: wazuh-active-response
+          mountPath: /var/ossec/active-response/bin
+        - name: wazuh-agentless
+          mountPath: /var/ossec/agentless
+        - name: wazuh-wodles
+          mountPath: /var/ossec/wodles
+        - name: filebeat-etc
+          mountPath: /etc/filebeat
+        - name: filebeat-var
+          mountPath: /var/lib/filebeat
+        # SSL certificates
+        - name: root-ca-cert
+          mountPath: /etc/ssl/root-ca.pem
+          subPath: root-ca.pem
+        - name: manager-cert
+          mountPath: /etc/ssl/filebeat.pem
+          subPath: wazuh.manager.pem
+        - name: manager-key
+          mountPath: /etc/ssl/filebeat.key
+          subPath: wazuh.manager-key.pem
+        # Configuration
+        - name: manager-config
+          mountPath: /wazuh-config-mount/etc/ossec.conf
+          subPath: ossec.conf
+        # Log volumes (read-only from other services)
+        - name: nginx-logs
+          mountPath: /var/log/nginx
+          readOnly: true
+        - name: modsec-logs
+          mountPath: /var/log/modsec
+          readOnly: true
+        - name: suricata-logs
+          mountPath: /var/log/suricata
+          readOnly: true
+        - name: zeek-logs
+          mountPath: /var/log/zeek
+          readOnly: true
+      volumes:
+      - name: wazuh-ruleset
+        emptyDir: {}
+      - name: wazuh-api-config
+        emptyDir: {}
+      - name: wazuh-etc
+        emptyDir: {}
+      - name: wazuh-logs
+        emptyDir: {}
+      - name: wazuh-queue
+        emptyDir: {}
+      - name: wazuh-var-multigroups
+        emptyDir: {}
+      - name: wazuh-integrations
+        emptyDir: {}
+      - name: wazuh-active-response
+        emptyDir: {}
+      - name: wazuh-agentless
+        emptyDir: {}
+      - name: wazuh-wodles
+        emptyDir: {}
+      - name: filebeat-etc
+        emptyDir: {}
+      - name: filebeat-var
+        emptyDir: {}
+      # SSL certificates from secrets
+      - name: root-ca-cert
+        secret:
+          secretName: wazuh-certs
+          items:
+          - key: root-ca.pem
+            path: root-ca.pem
+      - name: manager-cert
+        secret:
+          secretName: wazuh-certs
+          items:
+          - key: wazuh.manager.pem
+            path: wazuh.manager.pem
+      - name: manager-key
+        secret:
+          secretName: wazuh-certs
+          items:
+          - key: wazuh.manager-key.pem
+            path: wazuh.manager-key.pem
+      # Configuration from configmap
+      - name: manager-config
+        configMap:
+          name: wazuh-manager-config
+      # Log volumes (hostPath to collect from nodes)
+      - name: nginx-logs
+        hostPath:
+          path: /var/log/nginx
+          type: DirectoryOrCreate
+      - name: modsec-logs
+        hostPath:
+          path: /var/log/modsec
+          type: DirectoryOrCreate
+      - name: suricata-logs
+        hostPath:
+          path: /var/log/suricata
+          type: DirectoryOrCreate
+      - name: zeek-logs
+        hostPath:
+          path: /var/log/zeek
+          type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wazuh-manager
+  namespace: siem
+  labels:
+    app: wazuh-manager
+spec:
+  selector:
+    app: wazuh-manager
+  ports:
+  - name: api
+    port: 55000
+    targetPort: 55000
+  - name: agent
+    port: 1514
+    targetPort: 1514
+  - name: agent-registration
+    port: 1515
+    targetPort: 1515
+  - name: syslog
+    port: 514
+    targetPort: 514
+    protocol: UDP
+  type: ClusterIP

@@ -1,0 +1,101 @@
+# Security monitoring and alerting for SIEM
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: siem-security-monitoring
+  namespace: siem
+data:
+  security-alerts.yaml: |
+    # PrometheusRule for SIEM security alerts
+    apiVersion: monitoring.coreos.com/v1
+    kind: PrometheusRule
+    metadata:
+      name: siem-security-alerts
+      namespace: siem
+    spec:
+      groups:
+      - name: siem.security
+        rules:
+        # Alert on suspicious logins
+        - alert: SiemSuspiciousLogin
+          expr: increase(wazuh_failed_logins_total[5m]) > 5
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Multiple failed login attempts in SIEM"
+            description: "Detected {{ $value }} failed login attempts in the last 5 minutes"
+
+        # Alert on privileged container starts
+        - alert: SiemPrivilegedContainer
+          expr: kube_pod_container_info{namespace="siem", privileged="true"}
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Privileged container running in SIEM namespace"
+            description: "Container {{ $labels.container }} in pod {{ $labels.pod }} is running privileged"
+
+        # Alert on SIEM component restarts
+        - alert: SiemComponentRestart
+          expr: increase(kube_pod_container_status_restarts_total{namespace="siem"}[5m]) > 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "SIEM component restarted"
+            description: "Pod {{ $labels.pod }} in SIEM namespace restarted"
+---
+# Audit logging configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: siem-audit-config
+  namespace: siem
+data:
+  audit-policy.yaml: |
+    apiVersion: audit.k8s.io/v1
+    kind: Policy
+    rules:
+    - level: Metadata
+      namespaces: ["siem"]
+      verbs: ["create", "update", "patch", "delete"]
+    - level: RequestResponse
+      namespaces: ["siem"]
+      resources:
+      - group: ""
+        resources: ["secrets", "configmaps"]
+      verbs: ["create", "update", "patch"]
+    - level: Metadata
+      userGroups: ["system:authenticated"]
+      namespaces: ["siem"]
+---
+# Falco rules for SIEM runtime security
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-siem-rules
+  namespace: siem
+data:
+  siem-security-rules.yaml: |
+    - rule: SIEM Suspicious File Access
+      desc: Detect suspicious file access in SIEM containers
+      condition: >
+        container and namespace=siem and
+        (open_write or open_read) and
+        (fd.filename pmatch (/etc/shadow,/etc/passwd,/var/ossec/etc/ossec.conf))
+      output: >
+        Suspicious file access in SIEM (user=%user.name command=%proc.cmdline file=%fd.filename container=%container.name namespace=%k8s.ns.name)
+      priority: CRITICAL
+      tags: [siem, security]
+
+    - rule: SIEM Privileged Execution
+      desc: Detect privileged command execution in SIEM
+      condition: >
+        container and namespace=siem and
+        spawned_process and proc.tty != 0 and
+        (proc.cmdline pmatch (sudo,su,bash,sh) or proc.vpid=1)
+      output: >
+        Privileged execution in SIEM (user=%user.name command=%proc.cmdline container=%container.name)
+      priority: WARNING
+      tags: [siem, security]

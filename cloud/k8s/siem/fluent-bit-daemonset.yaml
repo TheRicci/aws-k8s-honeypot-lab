@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: siem
+  labels:
+    app: fluent-bit
+    component: logging
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+        component: logging
+    spec:
+      serviceAccountName: fluent-bit
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit:2.2
+        volumeMounts:
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc/fluent-bit.conf
+          subPath: fluent-bit.conf
+        - name: fluent-bit-parsers
+          mountPath: /fluent-bit/etc/parsers.conf
+          subPath: parsers.conf
+        # Mount logs from honeypot nodes
+        - name: modsec-logs
+          mountPath: /var/log/modsec
+          readOnly: true
+        - name: suricata-logs
+          mountPath: /var/log/suricata
+          readOnly: true
+        - name: zeek-logs
+          mountPath: /var/log/zeek
+          readOnly: true
+        - name: wazuh-logs
+          mountPath: /var/log/wazuh
+          readOnly: true
+        # SSL certificates for secure communication
+        - name: wazuh-certs
+          mountPath: /etc/ssl
+          readOnly: true
+      volumes:
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config
+      - name: fluent-bit-parsers
+        configMap:
+          name: fluent-bit-parsers
+      - name: modsec-logs
+        hostPath:
+          path: /var/log/modsec
+          type: DirectoryOrCreate
+      - name: suricata-logs
+        hostPath:
+          path: /var/log/suricata
+          type: DirectoryOrCreate
+      - name: zeek-logs
+        hostPath:
+          path: /var/log/zeek
+          type: DirectoryOrCreate
+      - name: wazuh-logs
+        hostPath:
+          path: /var/log/wazuh
+          type: DirectoryOrCreate
+      - name: wazuh-certs
+        secret:
+          secretName: wazuh-certs
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: siem
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluent-bit
+rules:
+- apiGroups: [""]
+  resources: ["pods", "namespaces"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluent-bit
+subjects:
+- kind: ServiceAccount
+  name: fluent-bit
+  namespace: siem
+roleRef:
+  kind: ClusterRole
+  name: fluent-bit
+  apiGroup: rbac.authorization.k8s.io

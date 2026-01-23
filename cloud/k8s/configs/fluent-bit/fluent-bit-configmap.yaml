@@ -1,0 +1,174 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: siem
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         5
+        Log_Level     info
+        Daemon        off
+        Parsers_File  parsers.conf
+
+    [INPUT]
+        Name              tail
+        Tag               modsec.*
+        Path              /var/log/modsec/*.log
+        Parser            json
+        DB                /var/log/fluentbit-modsec.db
+        Mem_Buf_Limit     5MB
+        Refresh_Interval  5
+
+    [INPUT]
+        Name              tail
+        Tag               suricata.*
+        Path              /var/log/suricata/*.json
+        Parser            json
+        DB                /var/log/fluentbit-suricata.db
+        Mem_Buf_Limit     5MB
+        Refresh_Interval  5
+
+    [INPUT]
+        Name              tail
+        Tag               zeek.*
+        Path              /var/log/zeek/*/conn.log
+        Parser            json
+        DB                /var/log/fluentbit-zeek.db
+        Mem_Buf_Limit     5MB
+        Refresh_Interval  5
+
+    [INPUT]
+        Name              tail
+        Tag               zeek.http
+        Path              /var/log/zeek/*/http.log
+        Parser            json
+        DB                /var/log/fluentbit-zeek-http.db
+        Mem_Buf_Limit     5MB
+        Refresh_Interval  5
+
+    [INPUT]
+        Name              tail
+        Tag               zeek.ssl
+        Path              /var/log/zeek/*/ssl.log
+        Parser            json
+        DB                /var/log/fluentbit-zeek-ssl.db
+        Mem_Buf_Limit     5MB
+        Refresh_Interval  5
+
+    [INPUT]
+        Name              tail
+        Tag               wazuh.alerts
+        Path              /var/log/wazuh/alerts/alerts.json
+        Parser            json
+        DB                /var/log/fluentbit-wazuh.db
+        Mem_Buf_Limit     5MB
+        Refresh_Interval  5
+
+    [FILTER]
+        Name                grep
+        Match               *
+        Exclude             log /healthcheck
+
+    [FILTER]
+        Name                record_modifier
+        Match               *
+        Record              hostname ${HOSTNAME}
+        Record              cluster honeylab
+        Record              namespace siem
+
+    [FILTER]
+        Name                record_modifier
+        Match               modsec.*
+        Record              source modsecurity
+        Record              type waf
+
+    [FILTER]
+        Name                record_modifier
+        Match               suricata.*
+        Record              source suricata
+        Record              type ids
+
+    [FILTER]
+        Name                record_modifier
+        Match               zeek.*
+        Record              source zeek
+        Record              type nsm
+
+    [FILTER]
+        Name                record_modifier
+        Match               wazuh.*
+        Record              source wazuh
+        Record              type siem
+
+    [OUTPUT]
+        Name  opensearch
+        Match *
+        Host  wazuh-indexer.siem.svc.cluster.local
+        Port  9200
+        Index honeylab-security
+        Type  _doc
+        HTTP_User admin
+        HTTP_Passwd SecretPassword
+        tls On
+        tls.verify Off
+        Suppress_Type_Name On
+        Logstash_Format On
+        Logstash_Prefix honeylab-security
+        Retry_Limit False
+
+    [OUTPUT]
+        Name  stdout
+        Match *
+        Format json_lines
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-parsers
+  namespace: siem
+data:
+  parsers.conf: |
+    [PARSER]
+        Name        json
+        Format      json
+        Time_Key    timestamp
+        Time_Format %Y-%m-%dT%H:%M:%S.%L%z
+
+    [PARSER]
+        Name        suricata-json
+        Format      json
+        Time_Key    timestamp
+        Time_Format %Y-%m-%dT%H:%M:%S.%f
+
+    [PARSER]
+        Name        zeek-json
+        Format      json
+        Time_Key    ts
+        Time_Format %s.%f
+
+    [PARSER]
+        Name        modsec-json
+        Format      json
+        Time_Key    timestamp
+        Time_Format %Y-%m-%dT%H:%M:%S%z
+
+    [PARSER]
+        Name        wazuh-json
+        Format      json
+        Time_Key    timestamp
+        Time_Format %Y-%m-%dT%H:%M:%S.%f%z
+
+    [PARSER]
+        Name        syslog-rfc3164
+        Format      regex
+        Regex       ^\<(?<pri>[0-9]+)\>(?<time>[^ ]* {1,2}[^ ]* [^ ]*) (?<host>[^ ]*) (?<ident>[^ :\[\]]*)(?:\[(?<pid>[0-9]+)\])?(?:[^\:]*\:)? *(?<message>.*)$
+        Time_Key    time
+        Time_Format %b %d %H:%M:%S
+
+    [PARSER]
+        Name        syslog-rfc5424
+        Format      regex
+        Regex       ^\<(?<pri>[0-9]+)\>(?<ver>[0-9]+) (?<time>[^ ]+) (?<host>[^ ]+) (?<ident>[^ ]+) (?<pid>[0-9]+) (?<msgid>[^ ]+) (?<extradata>(\[(.*)\]|[^ ])) (?<message>.+)$
+        Time_Key    time
+        Time_Format %Y-%m-%dT%H:%M:%S%z

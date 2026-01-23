@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: honeypot
+  namespace: honeynet
+  labels:
+    app: honeypot
+    component: deception
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: honeypot
+  template:
+    metadata:
+      labels:
+        app: honeypot
+        component: deception
+    spec:
+      nodeSelector:
+        role: honeypot
+      securityContext:
+        runAsUser: 0  # Run as root for privileged access
+      containers:
+      - name: honeypot
+        # qeeqbox/honeypots - Multi-protocol honeypot server
+        # Can use justsky/honeypots:latest directly or build custom image
+        image: justsky/honeypots:latest
+        securityContext:
+          privileged: true  # Required for Wazuh agent
+        ports:
+        - containerPort: 22    # SSH
+        - containerPort: 80    # HTTP
+        - containerPort: 443   # HTTPS
+        - containerPort: 21    # FTP
+        - containerPort: 990   # FTPS (implicitly handled by FTP honeypot)
+        command: ["python3", "-m", "honeypots"]
+        args: ["--setup", "http:80,https:443,ftp:21,ssh:22", "--auto"]
+        env:
+        - name: WAZUH_MANAGER
+          value: "wazuh-manager.siem.svc.cluster.local"
+        - name: WAZUH_REGISTRATION_SERVER
+          value: "wazuh-manager.siem.svc.cluster.local"
+        volumeMounts:
+        - name: honeypot-data
+          mountPath: /data
+      volumes:
+      - name: honeypot-data
+        emptyDir: {}

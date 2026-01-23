@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: threat-central
+  namespace: siem
+  labels:
+    app: threat-central
+    component: intelligence
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: threat-central
+  template:
+    metadata:
+      labels:
+        app: threat-central
+        component: intelligence
+    spec:
+      nodeSelector:
+        role: siem
+      containers:
+      - name: threat-central
+        # TODO: Replace with your registry image once built
+        image: threat-central:latest
+        stdin: true
+        tty: true
+        volumeMounts:
+        - name: threat-data
+          mountPath: /app/data
+      volumes:
+      - name: threat-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: threat-central
+  namespace: siem
+  labels:
+    app: threat-central
+spec:
+  selector:
+    app: threat-central
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+  type: ClusterIP
